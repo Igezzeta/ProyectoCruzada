@@ -13,7 +13,7 @@ const ITEMS = [
   "Medicinas",
 ];
 
-const GROUP_NAMES = ["Clero", "Guarnición", "Siervos", "Burguesía", "Población Civil"];
+const GROUP_NAMES = ["Clero", "Guarnición", "Burguesía", "Población Civil"];
 
 const state = {
   day: 1,
@@ -93,6 +93,7 @@ const createGroup = (name) => ({
   hunger: 0,
   pendingFood: false,
   pendingWater: false,
+  returnedThisTurn: false,
   dead: false,
   onExpedition: false,
   expeditionReturn: null,
@@ -169,6 +170,7 @@ const resetTerminalCounter = (current, flags, key) => {
 const applyDailyVariation = () => {
   state.groups.forEach((group) => {
     if (group.dead) return;
+    group.returnedThisTurn = false;
     if (group.pendingWater) {
       updateStat(group, "thirst", -45);
       group.pendingWater = false;
@@ -200,11 +202,13 @@ const applyPassiveEffects = () => {
     if (states.hunger === "Hambrientos") {
       updateStat(group, "loyalty", -0.5);
     }
-    if (states.thirst === "Deshidratados") {
-      updateStat(group, "population", -10);
-    }
-    if (states.hunger === "Moribundos") {
-      updateStat(group, "population", -10);
+    if (!group.onExpedition && !group.returnedThisTurn) {
+      if (states.thirst === "Deshidratados") {
+        updateStat(group, "population", -5);
+      }
+      if (states.hunger === "Moribundos") {
+        updateStat(group, "population", -5);
+      }
     }
   });
   logEntry("Los efectos pasivos afectaron a los grupos activos.");
@@ -276,6 +280,7 @@ const resolveExpeditions = () => {
 
     group.onExpedition = false;
     group.expeditionReturn = null;
+    group.returnedThisTurn = true;
 
     if (group.returnThirst) {
       group.thirst = 75;
@@ -285,6 +290,8 @@ const resolveExpeditions = () => {
       group.hunger = 75;
       group.returnHunger = false;
     }
+
+    logEntry(`La expedición de <strong>${group.name}</strong> regresa al castillo.`);
 
     if (Math.random() <= 0.1) {
       group.dead = true;
@@ -348,18 +355,26 @@ const applyEventSuccessPenalty = (group, baseChance) => {
 };
 
 const giveFood = (group) => {
-  if (state.food < 0.2) return;
-  state.food = round1(state.food - 0.2);
+  if (state.food < 0.25) return;
+  state.food = round1(state.food - 0.25);
   group.pendingFood = true;
   logEntry(`La comida para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
 };
 
 const giveWater = (group) => {
-  if (state.water < 0.2) return;
-  state.water = round1(state.water - 0.2);
+  if (state.water < 0.25) return;
+  state.water = round1(state.water - 0.25);
   group.pendingWater = true;
   logEntry(`El agua para <strong>${group.name}</strong> surtirá efecto mañana.`);
+  render();
+};
+
+const giveMedicine = (group) => {
+  if (!state.inventory.includes("Medicinas")) return;
+  removeItem("Medicinas");
+  group.population = 100;
+  logEntry(`Se usan Medicinas en <strong>${group.name}</strong> y su población se recupera.`);
   render();
 };
 
@@ -986,16 +1001,22 @@ const render = () => {
     const foodButton = document.createElement("button");
     foodButton.textContent = "Dar comida";
     foodButton.disabled =
-      group.dead || group.onExpedition || state.food < 0.2 || group.pendingFood;
+      group.dead || group.onExpedition || state.food < 0.25 || group.pendingFood;
     foodButton.addEventListener("click", () => giveFood(group));
 
     const waterButton = document.createElement("button");
     waterButton.textContent = "Dar agua";
     waterButton.disabled =
-      group.dead || group.onExpedition || state.water < 0.2 || group.pendingWater;
+      group.dead || group.onExpedition || state.water < 0.25 || group.pendingWater;
     waterButton.addEventListener("click", () => giveWater(group));
 
-    actions.append(foodButton, waterButton);
+    const medicineButton = document.createElement("button");
+    medicineButton.textContent = "Dar medicinas";
+    medicineButton.disabled =
+      group.dead || group.onExpedition || !state.inventory.includes("Medicinas");
+    medicineButton.addEventListener("click", () => giveMedicine(group));
+
+    actions.append(foodButton, waterButton, medicineButton);
     card.append(actions);
     ui.groups.append(card);
   });
