@@ -28,6 +28,7 @@ const state = {
   eventQueue: [],
   delayedEvents: [],
   expeditionOfferDay: 2,
+  gameOver: false,
 };
 
 const ui = {
@@ -52,8 +53,24 @@ const logEntry = (message) => {
 };
 
 const initGame = () => {
+  resetGame();
+};
+
+const resetGame = () => {
+  state.day = 1;
+  state.food = 5;
+  state.water = 5;
   state.inventory = pickInitialItems();
+  state.castle.pressure = 0;
+  state.castle.pressureCounter = 0;
   state.groups = GROUP_NAMES.map((name) => createGroup(name));
+  state.eventQueue = [];
+  state.delayedEvents = [];
+  state.expeditionOfferDay = 2;
+  state.gameOver = false;
+  ui.log.innerHTML = "";
+  ui.nextDay.disabled = false;
+  ui.modal.classList.add("hidden");
   render();
   logEntry("Comienza la defensa del castillo.");
 };
@@ -74,6 +91,8 @@ const createGroup = (name) => ({
   loyalty: 100,
   thirst: 0,
   hunger: 0,
+  pendingFood: false,
+  pendingWater: false,
   dead: false,
   onExpedition: false,
   expeditionReturn: null,
@@ -85,6 +104,10 @@ const createGroup = (name) => ({
     loyaltyFinal: 0,
     thirstFinal: 0,
     hungerFinal: 0,
+  },
+  terminalFlags: {
+    thirst: false,
+    hunger: false,
   },
 });
 
@@ -132,11 +155,32 @@ const updateCastlePressure = (delta) => {
   state.castle.pressure = round1(statClamp(state.castle.pressure + delta));
 };
 
+const updateTerminalCounter = (current, flags, key) => {
+  if (flags[key]) return current + 1;
+  flags[key] = true;
+  return current;
+};
+
+const resetTerminalCounter = (current, flags, key) => {
+  flags[key] = false;
+  return 0;
+};
+
 const applyDailyVariation = () => {
   state.groups.forEach((group) => {
     if (group.dead) return;
-    updateStat(group, "thirst", 20);
-    updateStat(group, "hunger", 10);
+    if (group.pendingWater) {
+      updateStat(group, "thirst", -45);
+      group.pendingWater = false;
+    } else {
+      updateStat(group, "thirst", 20);
+    }
+    if (group.pendingFood) {
+      updateStat(group, "hunger", -40);
+      group.pendingFood = false;
+    } else {
+      updateStat(group, "hunger", 10);
+    }
     updateStat(group, "loyalty", -1);
   });
   updateCastlePressure(2.5);
@@ -168,15 +212,27 @@ const applyPassiveEffects = () => {
 
 const handleCounters = () => {
   state.groups.forEach((group) => {
-    if (group.dead) return;
+    if (group.dead || group.onExpedition) {
+      group.counters.thirstFinal = 0;
+      group.counters.hungerFinal = 0;
+      group.terminalFlags.thirst = false;
+      group.terminalFlags.hunger = false;
+      return;
+    }
     const states = getGroupStates(group);
     const counters = group.counters;
 
     counters.popFinal = states.population === "Crítica" ? counters.popFinal + 1 : 0;
     counters.loyaltyNeg = states.loyalty === "Descontentos" ? counters.loyaltyNeg + 1 : 0;
     counters.loyaltyFinal = states.loyalty === "Descontentos" ? counters.loyaltyFinal + 1 : 0;
-    counters.thirstFinal = states.thirst === "Deshidratados" ? counters.thirstFinal + 1 : 0;
-    counters.hungerFinal = states.hunger === "Moribundos" ? counters.hungerFinal + 1 : 0;
+    counters.thirstFinal =
+      states.thirst === "Deshidratados"
+        ? updateTerminalCounter(counters.thirstFinal, group.terminalFlags, "thirst")
+        : resetTerminalCounter(counters.thirstFinal, group.terminalFlags, "thirst");
+    counters.hungerFinal =
+      states.hunger === "Moribundos"
+        ? updateTerminalCounter(counters.hungerFinal, group.terminalFlags, "hunger")
+        : resetTerminalCounter(counters.hungerFinal, group.terminalFlags, "hunger");
 
     if (counters.popFinal === 5) {
       queueEvent(createFinalEvent("Evento final de Población", group));
@@ -269,12 +325,6 @@ const resolveExpeditions = () => {
   });
 };
 
-const applyDelayedEvents = () => {
-  if (state.eventQueue.length) {
-    openEvent(state.eventQueue.shift());
-  }
-};
-
 const dailyEvent = () => {
   const available = [
     eventRumorPeste,
@@ -287,7 +337,7 @@ const dailyEvent = () => {
     eventIntercambio,
   ];
   const eventCreator = pickRandom(available);
-  openEvent(eventCreator());
+  queueEvent(eventCreator());
 };
 
 const applyEventSuccessPenalty = (group, baseChance) => {
@@ -300,16 +350,16 @@ const applyEventSuccessPenalty = (group, baseChance) => {
 const giveFood = (group) => {
   if (state.food <= 0) return;
   state.food -= 1;
-  updateStat(group, "hunger", -40);
-  logEntry(`Se entregó comida a <strong>${group.name}</strong>.`);
+  group.pendingFood = true;
+  logEntry(`La comida para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
 };
 
 const giveWater = (group) => {
   if (state.water <= 0) return;
   state.water -= 1;
-  updateStat(group, "thirst", -45);
-  logEntry(`Se entregó agua a <strong>${group.name}</strong>.`);
+  group.pendingWater = true;
+  logEntry(`El agua para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
 };
 
@@ -341,8 +391,12 @@ const openEvent = (event) => {
 };
 
 const closeEvent = () => {
+  if (state.eventQueue.length) {
+    openEvent(state.eventQueue.shift());
+    return;
+  }
   ui.modal.classList.add("hidden");
-  ui.nextDay.disabled = false;
+  ui.nextDay.disabled = state.gameOver;
 };
 
 const createFinalEvent = (title, group) => ({
@@ -780,13 +834,13 @@ const expeditionEligible = (group) => {
   return !(states.population === "Diezmada" && states.loyalty === "Descontentos");
 };
 
-const offerExpedition = () => {
+const createExpeditionOfferEvent = () => {
   const candidates = state.groups.filter(expeditionEligible);
   if (!candidates.length) {
     logEntry("No hay grupos aptos para expediciones.");
-    return;
+    return null;
   }
-  openEvent({
+  return {
     title: "Expedición disponible",
     description: "Podés enviar un grupo a explorar (3-5 días fuera).",
     options: [
@@ -799,7 +853,7 @@ const offerExpedition = () => {
         action: () => logEntry("Se decide no enviar expediciones."),
       },
     ],
-  });
+  };
 };
 
 const sendExpedition = (group) => {
@@ -808,6 +862,18 @@ const sendExpedition = (group) => {
   group.expeditionReturn = state.day + duration;
   logEntry(`Se envía a <strong>${group.name}</strong> en expedición por ${duration} días.`);
 };
+
+const createSummaryEvent = () => ({
+  title: `Resumen del día ${state.day}`,
+  description: "Se cerró el día. Revisa el registro antes de continuar.",
+  options: [
+    {
+      label: "Continuar",
+      primary: true,
+      action: () => false,
+    },
+  ],
+});
 
 const updateExpeditionStatus = () => {
   state.groups.forEach((group) => {
@@ -818,12 +884,22 @@ const updateExpeditionStatus = () => {
 };
 
 const endGame = (message) => {
+  state.gameOver = true;
+  state.eventQueue = [];
   openEvent({
     title: "Fin de la partida",
     description: message,
     options: [
       {
-        label: "Aceptar",
+        label: "Reiniciar",
+        primary: true,
+        action: () => {
+          resetGame();
+          return true;
+        },
+      },
+      {
+        label: "Cerrar",
         action: () => {
           ui.nextDay.disabled = true;
           logEntry("La partida ha terminado.");
@@ -835,7 +911,9 @@ const endGame = (message) => {
 };
 
 const advanceDay = () => {
+  if (state.gameOver) return;
   state.day += 1;
+  state.eventQueue = [];
   applyDailyVariation();
   resolveExpeditions();
   handleCounters();
@@ -843,25 +921,19 @@ const advanceDay = () => {
   updateExpeditionStatus();
 
   checkDelayedTriggers();
-  applyDelayedEvents();
-  if (!ui.modal.classList.contains("hidden")) {
-    render();
-    return;
-  }
 
   if (state.day === state.expeditionOfferDay) {
     state.expeditionOfferDay += 2;
-    offerExpedition();
-    if (!ui.modal.classList.contains("hidden")) {
-      render();
-      return;
-    }
+    const expeditionEvent = createExpeditionOfferEvent();
+    if (expeditionEvent) queueEvent(expeditionEvent);
   }
 
   dailyEvent();
-  if (!ui.modal.classList.contains("hidden")) {
-    render();
-    return;
+  if (!state.gameOver) {
+    queueEvent(createSummaryEvent());
+  }
+  if (state.eventQueue.length) {
+    openEvent(state.eventQueue.shift());
   }
   render();
 };
@@ -904,12 +976,14 @@ const render = () => {
     actions.className = "group__actions";
     const foodButton = document.createElement("button");
     foodButton.textContent = "Dar comida";
-    foodButton.disabled = group.dead || group.onExpedition || state.food <= 0;
+    foodButton.disabled =
+      group.dead || group.onExpedition || state.food <= 0 || group.pendingFood;
     foodButton.addEventListener("click", () => giveFood(group));
 
     const waterButton = document.createElement("button");
     waterButton.textContent = "Dar agua";
-    waterButton.disabled = group.dead || group.onExpedition || state.water <= 0;
+    waterButton.disabled =
+      group.dead || group.onExpedition || state.water <= 0 || group.pendingWater;
     waterButton.addEventListener("click", () => giveWater(group));
 
     actions.append(foodButton, waterButton);
