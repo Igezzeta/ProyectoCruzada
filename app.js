@@ -306,12 +306,12 @@ const resolveExpeditions = () => {
 
     if (Math.random() < foodRoll) {
       const found = randRange(1, 3);
-      state.food += found;
+      state.food = round1(state.food + found);
       logEntry(`La expedición de <strong>${group.name}</strong> consigue ${found} comida.`);
     }
     if (Math.random() < waterRoll) {
       const found = randRange(1, 4);
-      state.water += found;
+      state.water = round1(state.water + found);
       logEntry(`La expedición de <strong>${group.name}</strong> consigue ${found} agua.`);
     }
     if (Math.random() < itemRoll) {
@@ -348,16 +348,16 @@ const applyEventSuccessPenalty = (group, baseChance) => {
 };
 
 const giveFood = (group) => {
-  if (state.food <= 0) return;
-  state.food -= 1;
+  if (state.food < 0.2) return;
+  state.food = round1(state.food - 0.2);
   group.pendingFood = true;
   logEntry(`La comida para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
 };
 
 const giveWater = (group) => {
-  if (state.water <= 0) return;
-  state.water -= 1;
+  if (state.water < 0.2) return;
+  state.water = round1(state.water - 0.2);
   group.pendingWater = true;
   logEntry(`El agua para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
@@ -406,6 +406,15 @@ const createFinalEvent = (title, group) => ({
     {
       label: "Aceptar",
       action: () => {
+        if (
+          group.onExpedition &&
+          (title === "Evento final de Sed" || title === "Evento final de Hambre")
+        ) {
+          logEntry(
+            `El grupo <strong>${group.name}</strong> estaba en expedición y evita la muerte.`,
+          );
+          return false;
+        }
         group.dead = true;
         logEntry(`Se perdió el grupo <strong>${group.name}</strong>.`);
         if (state.groups.every((item) => item.dead)) {
@@ -643,10 +652,10 @@ const eventIntercambio = () => {
           removeItem(requested);
           if (Math.random() < 0.5) {
             if (Math.random() < 0.5) {
-              state.water += 2;
+              state.water = round1(state.water + 2);
               logEntry("La oferta rinde 2 de agua.");
             } else {
-              state.food += 2;
+              state.food = round1(state.food + 2);
               logEntry("La oferta rinde 2 de comida.");
             }
           } else {
@@ -718,10 +727,10 @@ const resolveChooseCharacter = (group) => {
       }
     }
     if (Math.random() < 0.5) {
-      state.water += 2;
+      state.water = round1(state.water + 2);
       logEntry("La negociación aporta 2 de agua.");
     } else {
-      state.food += 2;
+      state.food = round1(state.food + 2);
       logEntry("La negociación aporta 2 de comida.");
     }
   } else {
@@ -940,8 +949,8 @@ const advanceDay = () => {
 
 const render = () => {
   ui.day.textContent = state.day;
-  ui.food.textContent = state.food;
-  ui.water.textContent = state.water;
+  ui.food.textContent = state.food.toFixed(1);
+  ui.water.textContent = state.water.toFixed(1);
   ui.inventory.innerHTML = "";
   state.inventory.forEach((item) => {
     const li = document.createElement("li");
@@ -977,13 +986,13 @@ const render = () => {
     const foodButton = document.createElement("button");
     foodButton.textContent = "Dar comida";
     foodButton.disabled =
-      group.dead || group.onExpedition || state.food <= 0 || group.pendingFood;
+      group.dead || group.onExpedition || state.food < 0.2 || group.pendingFood;
     foodButton.addEventListener("click", () => giveFood(group));
 
     const waterButton = document.createElement("button");
     waterButton.textContent = "Dar agua";
     waterButton.disabled =
-      group.dead || group.onExpedition || state.water <= 0 || group.pendingWater;
+      group.dead || group.onExpedition || state.water < 0.2 || group.pendingWater;
     waterButton.addEventListener("click", () => giveWater(group));
 
     actions.append(foodButton, waterButton);
