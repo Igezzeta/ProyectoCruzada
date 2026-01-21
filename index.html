@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proyecto Cruzada - Prototipo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app__header">
+      <div>
+        <h1>Proyecto Cruzada</h1>
+        <p class="subtitle">Prototipo de loop diario y eventos.</p>
+      </div>
+      <div class="day">
+        <span>Día</span>
+        <strong id="day">1</strong>
+      </div>
+      <button id="next-day" class="primary">Avanzar día</button>
+    </header>
+
+    <section class="panel">
+      <h2>Castillo</h2>
+      <div class="stats" id="castle"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Recursos</h2>
+      <div class="resources">
+        <div><span>Comida</span><strong id="food">0</strong></div>
+        <div><span>Agua</span><strong id="water">0</strong></div>
+      </div>
+      <div class="inventory">
+        <h3>Inventario</h3>
+        <ul id="inventory"></ul>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Grupos</h2>
+      <div id="groups" class="groups"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Registro diario</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <div id="event-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal__content">
+      <h2 id="event-title"></h2>
+      <p id="event-description"></p>
+      <div id="event-actions" class="modal__actions"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
