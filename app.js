@@ -3,6 +3,7 @@ const clampProb = (value) => Math.min(95, Math.max(5, value));
 const randRange = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const pickRandom = (array) => array[Math.floor(Math.random() * array.length)];
 const round1 = (value) => Math.round(value * 10) / 10;
+const round2 = (value) => Math.round(value * 100) / 100;
 
 const ITEMS = [
   "Herramientas",
@@ -29,6 +30,7 @@ const state = {
   delayedEvents: [],
   expeditionOfferDay: 2,
   gameOver: false,
+  pendingItems: [],
 };
 
 const ui = {
@@ -68,6 +70,7 @@ const resetGame = () => {
   state.delayedEvents = [];
   state.expeditionOfferDay = 2;
   state.gameOver = false;
+  state.pendingItems = [];
   ui.log.innerHTML = "";
   ui.nextDay.disabled = false;
   ui.modal.classList.add("hidden");
@@ -91,14 +94,13 @@ const createGroup = (name) => ({
   loyalty: 100,
   thirst: 0,
   hunger: 0,
-  pendingFood: false,
-  pendingWater: false,
+  pendingFoodCount: 0,
+  pendingWaterCount: 0,
+  pendingMedicine: false,
   returnedThisTurn: false,
   dead: false,
   onExpedition: false,
   expeditionReturn: null,
-  returnThirst: false,
-  returnHunger: false,
   counters: {
     popFinal: 0,
     loyaltyNeg: 0,
@@ -168,24 +170,38 @@ const resetTerminalCounter = (current, flags, key) => {
 };
 
 const applyDailyVariation = () => {
+  if (state.pendingItems.length) {
+    state.pendingItems.forEach((item) => {
+      if (!state.inventory.includes(item)) {
+        state.inventory.push(item);
+      }
+    });
+    state.pendingItems = [];
+    logEntry("Se reciben objetos pendientes en el castillo.");
+  }
   state.groups.forEach((group) => {
     if (group.dead) return;
     group.returnedThisTurn = false;
-    if (group.pendingWater) {
-      updateStat(group, "thirst", -45);
-      group.pendingWater = false;
+    if (group.pendingMedicine) {
+      group.population = 100;
+      group.pendingMedicine = false;
+      logEntry(`Las Medicinas restauran a <strong>${group.name}</strong>.`);
+    }
+    if (group.pendingWaterCount > 0) {
+      updateStat(group, "thirst", -45 * group.pendingWaterCount);
+      group.pendingWaterCount = 0;
     } else {
       updateStat(group, "thirst", 20);
     }
-    if (group.pendingFood) {
-      updateStat(group, "hunger", -40);
-      group.pendingFood = false;
+    if (group.pendingFoodCount > 0) {
+      updateStat(group, "hunger", -40 * group.pendingFoodCount);
+      group.pendingFoodCount = 0;
     } else {
       updateStat(group, "hunger", 10);
     }
     updateStat(group, "loyalty", -1);
   });
-  updateCastlePressure(2.5);
+  updateCastlePressure(1.5);
   logEntry("Se aplicaron las variaciones base del día.");
 };
 
@@ -203,6 +219,12 @@ const applyPassiveEffects = () => {
       updateStat(group, "loyalty", -0.5);
     }
     if (!group.onExpedition && !group.returnedThisTurn) {
+      if (states.thirst === "Abastecidos") {
+        updateStat(group, "population", 1);
+      }
+      if (states.hunger === "Alimentados") {
+        updateStat(group, "population", 1);
+      }
       if (states.thirst === "Deshidratados") {
         updateStat(group, "population", -5);
       }
@@ -282,15 +304,6 @@ const resolveExpeditions = () => {
     group.expeditionReturn = null;
     group.returnedThisTurn = true;
 
-    if (group.returnThirst) {
-      group.thirst = 75;
-      group.returnThirst = false;
-    }
-    if (group.returnHunger) {
-      group.hunger = 75;
-      group.returnHunger = false;
-    }
-
     logEntry(`La expedición de <strong>${group.name}</strong> regresa al castillo.`);
 
     if (Math.random() <= 0.1) {
@@ -313,20 +326,20 @@ const resolveExpeditions = () => {
 
     if (Math.random() < foodRoll) {
       const found = randRange(1, 3);
-      state.food = round1(state.food + found);
+      state.food = round2(state.food + found);
       logEntry(`La expedición de <strong>${group.name}</strong> consigue ${found} comida.`);
     }
     if (Math.random() < waterRoll) {
       const found = randRange(1, 4);
-      state.water = round1(state.water + found);
+      state.water = round2(state.water + found);
       logEntry(`La expedición de <strong>${group.name}</strong> consigue ${found} agua.`);
     }
     if (Math.random() < itemRoll) {
       const candidates = ITEMS.filter((item) => !state.inventory.includes(item));
       if (candidates.length) {
         const found = pickRandom(candidates);
-        state.inventory.push(found);
-        logEntry(`La expedición de <strong>${group.name}</strong> obtiene ${found}.`);
+        queueItem(found);
+        logEntry(`La expedición de <strong>${group.name}</strong> obtiene ${found} (llega mañana).`);
       }
     }
   });
@@ -356,16 +369,16 @@ const applyEventSuccessPenalty = (group, baseChance) => {
 
 const giveFood = (group) => {
   if (state.food < 0.25) return;
-  state.food = round1(state.food - 0.25);
-  group.pendingFood = true;
+  state.food = round2(state.food - 0.25);
+  group.pendingFoodCount += 1;
   logEntry(`La comida para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
 };
 
 const giveWater = (group) => {
   if (state.water < 0.25) return;
-  state.water = round1(state.water - 0.25);
-  group.pendingWater = true;
+  state.water = round2(state.water - 0.25);
+  group.pendingWaterCount += 1;
   logEntry(`El agua para <strong>${group.name}</strong> surtirá efecto mañana.`);
   render();
 };
@@ -373,13 +386,17 @@ const giveWater = (group) => {
 const giveMedicine = (group) => {
   if (!state.inventory.includes("Medicinas")) return;
   removeItem("Medicinas");
-  group.population = 100;
-  logEntry(`Se usan Medicinas en <strong>${group.name}</strong> y su población se recupera.`);
+  group.pendingMedicine = true;
+  logEntry(`Las Medicinas para <strong>${group.name}</strong> surtirán efecto mañana.`);
   render();
 };
 
 const queueEvent = (event) => {
   state.eventQueue.push(event);
+};
+
+const queueItem = (item) => {
+  state.pendingItems.push(item);
 };
 
 const openEvent = (event) => {
@@ -414,6 +431,9 @@ const closeEvent = () => {
   ui.nextDay.disabled = state.gameOver;
 };
 
+const hasActiveCastleGroups = () =>
+  state.groups.some((group) => !group.dead && !group.onExpedition);
+
 const createFinalEvent = (title, group) => ({
   title,
   description: `${group.name} ha colapsado y se pierde para el resto de la partida.`,
@@ -432,6 +452,9 @@ const createFinalEvent = (title, group) => ({
         }
         group.dead = true;
         logEntry(`Se perdió el grupo <strong>${group.name}</strong>.`);
+        if (!hasActiveCastleGroups()) {
+          return endGame("No quedan grupos activos en el castillo.");
+        }
         if (state.groups.every((item) => item.dead)) {
           return endGame("Todos los grupos han caído. El señor cruzado queda solo.");
         }
@@ -489,8 +512,8 @@ const eventRumorPeste = () => {
           const chance = applyEventSuccessPenalty(target, 50);
           if (Math.random() < chance / 100) {
             if (!state.inventory.includes("Medicinas")) {
-              state.inventory.push("Medicinas");
-              logEntry("Se obtienen Medicinas para el castillo.");
+              queueItem("Medicinas");
+              logEntry("Se obtienen Medicinas para el castillo (llegan mañana).");
             } else {
               updateStat(target, "population", 10);
               logEntry(`La población de <strong>${target.name}</strong> se recupera.`);
@@ -667,10 +690,10 @@ const eventIntercambio = () => {
           removeItem(requested);
           if (Math.random() < 0.5) {
             if (Math.random() < 0.5) {
-              state.water = round1(state.water + 2);
+              state.water = round2(state.water + 2);
               logEntry("La oferta rinde 2 de agua.");
             } else {
-              state.food = round1(state.food + 2);
+              state.food = round2(state.food + 2);
               logEntry("La oferta rinde 2 de comida.");
             }
           } else {
@@ -734,18 +757,18 @@ const resolveChooseCharacter = (group) => {
   if (Math.random() < chance) {
     const unowned = ITEMS.filter((item) => !state.inventory.includes(item));
     if (unowned.length) {
-      if (Math.random() < 0.7) {
-        const item = pickRandom(unowned);
-        state.inventory.push(item);
-        logEntry(`La negociación entrega ${item}.`);
-        return;
-      }
+    if (Math.random() < 0.7) {
+      const item = pickRandom(unowned);
+      queueItem(item);
+      logEntry(`La negociación entrega ${item} (llega mañana).`);
+      return;
+    }
     }
     if (Math.random() < 0.5) {
-      state.water = round1(state.water + 2);
+      state.water = round2(state.water + 2);
       logEntry("La negociación aporta 2 de agua.");
     } else {
-      state.food = round1(state.food + 2);
+      state.food = round2(state.food + 2);
       logEntry("La negociación aporta 2 de comida.");
     }
   } else {
@@ -855,6 +878,7 @@ const expeditionEligible = (group) => {
   if (group.dead || group.onExpedition) return false;
   const states = getGroupStates(group);
   if (states.population === "Crítica") return false;
+  if (states.thirst === "Deshidratados" || states.hunger === "Moribundos") return false;
   return !(states.population === "Diezmada" && states.loyalty === "Descontentos");
 };
 
@@ -902,8 +926,8 @@ const createSummaryEvent = () => ({
 const updateExpeditionStatus = () => {
   state.groups.forEach((group) => {
     if (!group.onExpedition || group.dead) return;
-    if (group.thirst >= 80) group.returnThirst = true;
-    if (group.hunger >= 80) group.returnHunger = true;
+    group.thirst = statClamp(group.thirst);
+    group.hunger = statClamp(group.hunger);
   });
 };
 
@@ -944,6 +968,12 @@ const advanceDay = () => {
   applyPassiveEffects();
   updateExpeditionStatus();
 
+  if (!hasActiveCastleGroups()) {
+    endGame("No quedan grupos activos en el castillo.");
+    render();
+    return;
+  }
+
   checkDelayedTriggers();
 
   if (state.day === state.expeditionOfferDay) {
@@ -964,8 +994,8 @@ const advanceDay = () => {
 
 const render = () => {
   ui.day.textContent = state.day;
-  ui.food.textContent = state.food.toFixed(1);
-  ui.water.textContent = state.water.toFixed(1);
+  ui.food.textContent = state.food.toFixed(2);
+  ui.water.textContent = state.water.toFixed(2);
   ui.inventory.innerHTML = "";
   state.inventory.forEach((item) => {
     const li = document.createElement("li");
@@ -1001,19 +1031,19 @@ const render = () => {
     const foodButton = document.createElement("button");
     foodButton.textContent = "Dar comida";
     foodButton.disabled =
-      group.dead || group.onExpedition || state.food < 0.25 || group.pendingFood;
+      group.dead || group.onExpedition || state.food < 0.25;
     foodButton.addEventListener("click", () => giveFood(group));
 
     const waterButton = document.createElement("button");
     waterButton.textContent = "Dar agua";
     waterButton.disabled =
-      group.dead || group.onExpedition || state.water < 0.25 || group.pendingWater;
+      group.dead || group.onExpedition || state.water < 0.25;
     waterButton.addEventListener("click", () => giveWater(group));
 
     const medicineButton = document.createElement("button");
     medicineButton.textContent = "Dar medicinas";
     medicineButton.disabled =
-      group.dead || group.onExpedition || !state.inventory.includes("Medicinas");
+      group.dead || group.onExpedition || !state.inventory.includes("Medicinas") || group.pendingMedicine;
     medicineButton.addEventListener("click", () => giveMedicine(group));
 
     actions.append(foodButton, waterButton, medicineButton);
